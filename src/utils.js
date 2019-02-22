@@ -1,4 +1,5 @@
 const path = require('path')
+const htmlParser = require('./parse')
 
 let fs = null
 let runJs = null // 执行 js
@@ -97,6 +98,66 @@ function transformRpx(style) {
   return style.replace(/(\d+)rpx/ig, '$1px')
 }
 
+/**
+ * 外链的wxss转成内链
+ */
+function transformWxs(content, componentPath) {
+  try {
+    // 先简单判断有没有wxs标签
+    if (content.indexOf('<wxs') === -1) return content
+    // 使用htmParse解析，深度判断有没有wxs标签
+    let res = getParseResult(content)
+    let { startStack, endStack, textStack } = res;
+    let i = 0;
+    // 找到所有带有src属性的wxs标签
+    let wxsArr = content.match(/<wxs(\s|\w|=|\"|\')*?src\s*=\s*[\"|\'](\s|\w|\.|\/)*[\"|\'](\s|\w|=|\"|\')*?(\/>|>(\w|\s)*<\/wxs>)/g);
+    // 可能同时存在多个wxs标签
+    while (i < startStack.length) {
+      if (startStack[i].tagName !== 'wxs') {
+        i++;
+        continue;
+      }
+      let wxsAttrs = startStack[i].attrs || [];
+      // 判断wxs是src外链还是内链，外链src不能为空，小程序同时只支持一种
+      let wxsItem = wxsAttrs.find(v => v.name === "src");
+      if (!wxsItem || !wxsItem.value) {
+        i++;
+        continue;
+      };
+      const wxsModuleName = wxsAttrs.find(v => v.name === "module").value;
+      const wxsContent = readFile(path.join(componentPath, '../', wxsItem.value));
+      content = content.replace(wxsArr[i], function() {
+        return `<wxs module="${wxsModuleName}">${wxsContent}</wxs>`
+      })
+      i++;
+    }
+    return content
+  } catch (error) {
+    console.log(JSON.stringify(error))
+    return content
+  }
+}
+
+function getParseResult(content) {
+  let startStack = []
+  let endStack = []
+  let textStack = []
+
+  htmlParser(content, {
+    start(tagName, attrs, unary) {
+      startStack.push({ tagName, attrs, unary });
+    },
+    end(tagName) {
+      endStack.push(tagName);
+    },
+    text(content) {
+      content = content.trim();
+      if (content) textStack.push(content);
+    },
+  });
+
+  return { startStack, endStack, textStack };
+}
 module.exports = {
   getEnv,
   setNodeJsEnv,
@@ -105,4 +166,5 @@ module.exports = {
   readFile,
   readJson,
   transformRpx,
+  transformWxs,
 }
